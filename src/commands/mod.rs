@@ -1,6 +1,6 @@
 pub mod build;
+pub mod config;
 pub mod flash;
 pub mod monitor;
-pub mod config;
-pub mod size;
 pub mod project;
+pub mod size;

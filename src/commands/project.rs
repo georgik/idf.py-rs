@@ -1,38 +1,38 @@
 use crate::{utils, Cli};
 use anyhow::Result;
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 pub async fn create_project(_cli: &Cli, name: &str, path: Option<&Path>) -> Result<()> {
     utils::setup_idf_environment()?;
-    
+
     let project_path = if let Some(path) = path {
         path.join(name)
     } else {
         PathBuf::from(name)
     };
-    
+
     if project_path.exists() {
         return Err(anyhow::anyhow!(
             "Directory {} already exists",
             project_path.display()
         ));
     }
-    
+
     println!("Creating project '{}' at: {}", name, project_path.display());
-    
+
     // Create project directory
     fs::create_dir_all(&project_path)?;
-    
+
     // Create basic project structure
     create_basic_project_structure(&project_path, name)?;
-    
+
     println!("Project '{}' created successfully!", name);
     println!("To get started:");
     println!("  cd {}", project_path.display());
     println!("  idf-rs set-target esp32");
     println!("  idf-rs build");
-    
+
     Ok(())
 }
 
@@ -40,9 +40,10 @@ fn create_basic_project_structure(project_path: &Path, name: &str) -> Result<()>
     // Create main directory
     let main_dir = project_path.join("main");
     fs::create_dir_all(&main_dir)?;
-    
+
     // Create CMakeLists.txt in root
-    let cmake_content = format!(r#"# For more information about build system see
+    let cmake_content = format!(
+        r#"# For more information about build system see
 # https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html
 # The following five lines of boilerplate have to be in your project's
 # CMakeLists.txt.
@@ -51,16 +52,18 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{{IDF_PATH}}/tools/cmake/project.cmake)
 project({})
-"#, name);
-    
+"#,
+        name
+    );
+
     fs::write(project_path.join("CMakeLists.txt"), cmake_content)?;
-    
+
     // Create main/CMakeLists.txt
     let main_cmake_content = r#"idf_component_register(SRCS "main.c"
                     INCLUDE_DIRS ".")
 "#;
     fs::write(main_dir.join("CMakeLists.txt"), main_cmake_content)?;
-    
+
     // Create main/main.c
     let main_c_content = r#"#include <stdio.h>
 #include <inttypes.h>
@@ -109,9 +112,10 @@ void app_main(void)
 }
 "#;
     fs::write(main_dir.join("main.c"), main_c_content)?;
-    
+
     // Create README.md
-    let readme_content = format!(r#"# {}
+    let readme_content = format!(
+        r#"# {}
 
 This is the {} ESP-IDF project.
 
@@ -131,9 +135,11 @@ Monitor the output:
 ```
 idf-rs monitor
 ```
-"#, name, name);
+"#,
+        name, name
+    );
     fs::write(project_path.join("README.md"), readme_content)?;
-    
+
     // Create .gitignore
     let gitignore_content = r#"build/
 managed_components/
@@ -141,6 +147,6 @@ dependencies.lock
 *.tmp
 "#;
     fs::write(project_path.join(".gitignore"), gitignore_content)?;
-    
+
     Ok(())
 }

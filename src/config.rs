@@ -22,66 +22,64 @@ impl SdkConfig {
             })
         }
     }
-    
+
     pub fn save_to_file(&self, path: &Path) -> Result<()> {
         let content = self.to_sdkconfig_format();
         fs::write(path, content)?;
         Ok(())
     }
-    
+
     fn parse_sdkconfig(content: &str) -> Result<Self> {
         let mut settings = HashMap::new();
         let mut target = None;
-        
+
         for line in content.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            
+
             if let Some((key, value)) = line.split_once('=') {
                 let key = key.trim();
                 let value = value.trim();
-                
+
                 if key == "CONFIG_IDF_TARGET" {
                     target = Some(value.trim_matches('"').to_string());
                 }
-                
+
                 settings.insert(key.to_string(), value.to_string());
             }
         }
-        
+
         Ok(Self { target, settings })
     }
-    
+
     fn to_sdkconfig_format(&self) -> String {
         let mut lines = Vec::new();
-        
+
         // Add header comment
         lines.push("# ESP-IDF Configuration".to_string());
         lines.push("".to_string());
-        
+
         // Sort keys for consistent output
         let mut sorted_keys: Vec<_> = self.settings.keys().collect();
         sorted_keys.sort();
-        
+
         for key in sorted_keys {
             if let Some(value) = self.settings.get(key) {
                 lines.push(format!("{}={}", key, value));
             }
         }
-        
+
         lines.join("\n")
     }
-    
+
     pub fn set_target(&mut self, target: &str) {
         self.target = Some(target.to_string());
-        self.settings.insert(
-            "CONFIG_IDF_TARGET".to_string(),
-            format!("\"{}\"", target)
-        );
+        self.settings
+            .insert("CONFIG_IDF_TARGET".to_string(), format!("\"{}\"", target));
     }
-    
+
     pub fn get_target(&self) -> Option<&String> {
         self.target.as_ref()
     }

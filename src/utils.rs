@@ -1,15 +1,14 @@
 use anyhow::Result;
-use std::process::{Command, Stdio};
 use std::env;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 pub fn list_targets() {
     println!("Supported targets:");
     let targets = [
-        "esp32", "esp32s2", "esp32s3", "esp32c2", "esp32c3", 
-        "esp32c6", "esp32h2", "esp32p4"
+        "esp32", "esp32s2", "esp32s3", "esp32c2", "esp32c3", "esp32c6", "esp32h2", "esp32p4",
     ];
-    
+
     for target in targets {
         println!("  {}", target);
     }
@@ -42,23 +41,26 @@ pub async fn run_command(
     if verbose {
         println!("Running: {} {}", program, args.join(" "));
     }
-    
+
     let mut cmd = Command::new(program);
     cmd.args(args);
-    
+
     if let Some(dir) = current_dir {
         cmd.current_dir(dir);
     }
-    
+
     let status = cmd
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()?;
-    
+
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Command failed with exit code: {:?}", status.code()))
+        Err(anyhow::anyhow!(
+            "Command failed with exit code: {:?}",
+            status.code()
+        ))
     }
 }
 
@@ -69,13 +71,13 @@ pub async fn run_command_with_output(
 ) -> Result<String> {
     let mut cmd = Command::new(program);
     cmd.args(args);
-    
+
     if let Some(dir) = current_dir {
         cmd.current_dir(dir);
     }
-    
+
     let output = cmd.output()?;
-    
+
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
@@ -92,7 +94,7 @@ pub fn get_python_executable() -> Result<String> {
             return Ok(python_path.to_string_lossy().to_string());
         }
     }
-    
+
     // Fallback to system python3
     Ok("python3".to_string())
 }
@@ -104,6 +106,6 @@ pub fn setup_idf_environment() -> Result<()> {
             "IDF_PATH environment variable is not set. Please set up ESP-IDF environment first."
         ));
     }
-    
+
     Ok(())
 }

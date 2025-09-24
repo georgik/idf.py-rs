@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -126,6 +126,7 @@ enum Commands {
     BuildSystemTargets,
 }
 
+mod build_systems;
 mod commands;
 mod config;
 mod utils;
@@ -133,13 +134,13 @@ mod utils;
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    
+
     // Handle the special case of "flash monitor" by checking raw args
     let args: Vec<String> = env::args().collect();
-    let has_flash_monitor = args.windows(2).any(|window| {
-        window[0] == "flash" && window[1] == "monitor"
-    });
-    
+    let has_flash_monitor = args
+        .windows(2)
+        .any(|window| window[0] == "flash" && window[1] == "monitor");
+
     let cli = Cli::parse();
 
     // Handle global flags first
@@ -155,24 +156,14 @@ async fn main() -> Result<()> {
 
     // Execute the command
     match &cli.command {
-        Some(Commands::Build { args }) => {
-            commands::build::execute(&cli, args).await
-        }
-        Some(Commands::App) => {
-            commands::build::execute_app(&cli).await
-        }
-        Some(Commands::Bootloader) => {
-            commands::build::execute_bootloader(&cli).await
-        }
-        Some(Commands::Clean) => {
-            commands::build::execute_clean(&cli).await
-        }
-        Some(Commands::Fullclean) => {
-            commands::build::execute_fullclean(&cli).await
-        }
+        Some(Commands::Build { args }) => commands::build::execute(&cli, args).await,
+        Some(Commands::App) => commands::build::execute_app(&cli).await,
+        Some(Commands::Bootloader) => commands::build::execute_bootloader(&cli).await,
+        Some(Commands::Clean) => commands::build::execute_clean(&cli).await,
+        Some(Commands::Fullclean) => commands::build::execute_fullclean(&cli).await,
         Some(Commands::Flash { args }) => {
             commands::flash::execute(&cli, args).await?;
-            
+
             // If "flash monitor" was detected, start monitor after successful flash
             if has_flash_monitor {
                 println!("Starting monitor after successful flash...");
@@ -181,43 +172,23 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         }
-        Some(Commands::AppFlash) => {
-            commands::flash::execute_app(&cli).await
-        }
-        Some(Commands::BootloaderFlash) => {
-            commands::flash::execute_bootloader(&cli).await
-        }
-        Some(Commands::Monitor { args }) => {
-            commands::monitor::execute(&cli, args).await
-        }
-        Some(Commands::Menuconfig) => {
-            commands::config::execute_menuconfig(&cli).await
-        }
+        Some(Commands::AppFlash) => commands::flash::execute_app(&cli).await,
+        Some(Commands::BootloaderFlash) => commands::flash::execute_bootloader(&cli).await,
+        Some(Commands::Monitor { args }) => commands::monitor::execute(&cli, args).await,
+        Some(Commands::Menuconfig) => commands::config::execute_menuconfig(&cli).await,
         Some(Commands::SetTarget { target }) => {
             commands::config::execute_set_target(&cli, target).await
         }
-        Some(Commands::EraseFlash) => {
-            commands::flash::execute_erase(&cli).await
-        }
-        Some(Commands::Size) => {
-            commands::size::execute(&cli).await
-        }
-        Some(Commands::SizeComponents) => {
-            commands::size::execute_components(&cli).await
-        }
-        Some(Commands::SizeFiles) => {
-            commands::size::execute_files(&cli).await
-        }
-        Some(Commands::Reconfigure) => {
-            commands::build::execute_reconfigure(&cli).await
-        }
+        Some(Commands::EraseFlash) => commands::flash::execute_erase(&cli).await,
+        Some(Commands::Size) => commands::size::execute(&cli).await,
+        Some(Commands::SizeComponents) => commands::size::execute_components(&cli).await,
+        Some(Commands::SizeFiles) => commands::size::execute_files(&cli).await,
+        Some(Commands::Reconfigure) => commands::build::execute_reconfigure(&cli).await,
         Some(Commands::CreateProject { name, path }) => {
             let path_ref = path.as_deref();
             commands::project::create_project(&cli, name, path_ref).await
         }
-        Some(Commands::BuildSystemTargets) => {
-            commands::build::list_build_targets(&cli).await
-        }
+        Some(Commands::BuildSystemTargets) => commands::build::list_build_targets(&cli).await,
         None => {
             // Default behavior - show help
             println!("No command specified. Use --help for available commands.");
