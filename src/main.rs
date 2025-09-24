@@ -83,12 +83,32 @@ enum Commands {
     Fullclean,
     /// Flash the project
     Flash {
+        /// Extra arguments to pass to esptool
+        #[arg(long = "extra-args")]
+        extra_args: Option<String>,
+        /// Force write, skip security and compatibility checks
+        #[arg(long)]
+        force: bool,
+        /// Enable trace-level output of flasher tool interactions
+        #[arg(long)]
+        trace: bool,
         /// Flash arguments
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
     /// Flash the app only
-    AppFlash,
+    #[command(alias = "app-flash")]
+    AppFlash {
+        /// Extra arguments to pass to esptool
+        #[arg(long = "extra-args")]
+        extra_args: Option<String>,
+        /// Force write, skip security and compatibility checks
+        #[arg(long)]
+        force: bool,
+        /// Enable trace-level output of flasher tool interactions
+        #[arg(long)]
+        trace: bool,
+    },
     /// Flash bootloader only
     BootloaderFlash,
     /// Display serial output
@@ -161,8 +181,13 @@ async fn main() -> Result<()> {
         Some(Commands::Bootloader) => commands::build::execute_bootloader(&cli).await,
         Some(Commands::Clean) => commands::build::execute_clean(&cli).await,
         Some(Commands::Fullclean) => commands::build::execute_fullclean(&cli).await,
-        Some(Commands::Flash { args }) => {
-            commands::flash::execute(&cli, args).await?;
+        Some(Commands::Flash {
+            extra_args,
+            force,
+            trace,
+            args,
+        }) => {
+            commands::flash::execute(&cli, args, extra_args.as_deref(), *force, *trace).await?;
 
             // If "flash monitor" was detected, start monitor after successful flash
             if has_flash_monitor {
@@ -172,7 +197,11 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         }
-        Some(Commands::AppFlash) => commands::flash::execute_app(&cli).await,
+        Some(Commands::AppFlash {
+            extra_args,
+            force,
+            trace,
+        }) => commands::flash::execute_app(&cli, extra_args.as_deref(), *force, *trace).await,
         Some(Commands::BootloaderFlash) => commands::flash::execute_bootloader(&cli).await,
         Some(Commands::Monitor { args }) => commands::monitor::execute(&cli, args).await,
         Some(Commands::Menuconfig) => commands::config::execute_menuconfig(&cli).await,

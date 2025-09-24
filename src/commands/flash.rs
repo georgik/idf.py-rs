@@ -1,13 +1,28 @@
 use crate::{utils, Cli};
 use anyhow::Result;
 
-pub async fn execute(cli: &Cli, _args: &[String]) -> Result<()> {
+pub async fn execute(
+    cli: &Cli,
+    _args: &[String],
+    extra_args: Option<&str>,
+    force: bool,
+    trace: bool,
+) -> Result<()> {
     utils::setup_idf_environment()?;
 
     let project_dir = utils::get_project_dir(cli.project_dir.as_deref());
     let build_dir = utils::get_build_dir(cli.build_dir.as_deref(), &project_dir);
 
     println!("Flashing project...");
+    if let Some(extra) = extra_args {
+        println!("Using extra args: {}", extra);
+    }
+    if force {
+        println!("Force mode enabled");
+    }
+    if trace {
+        println!("Trace mode enabled");
+    }
 
     // First, ensure the project is built
     if !build_dir.exists() {
@@ -45,7 +60,12 @@ pub async fn execute(cli: &Cli, _args: &[String]) -> Result<()> {
     Ok(())
 }
 
-pub async fn execute_app(cli: &Cli) -> Result<()> {
+pub async fn execute_app(
+    cli: &Cli,
+    extra_args: Option<&str>,
+    force: bool,
+    trace: bool,
+) -> Result<()> {
     utils::setup_idf_environment()?;
 
     let project_dir = utils::get_project_dir(cli.project_dir.as_deref());
@@ -53,8 +73,16 @@ pub async fn execute_app(cli: &Cli) -> Result<()> {
 
     println!("Flashing app only...");
 
+    // Get project name from directory
+    let project_name = project_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("app");
+
+    let app_bin_path = build_dir.join(format!("{}.bin", project_name));
+
     // Build app if needed
-    if !build_dir.join("app.bin").exists() {
+    if !app_bin_path.exists() {
         println!("App binary doesn't exist. Building app first...");
         crate::commands::build::execute_app(cli).await?;
     }
@@ -65,7 +93,6 @@ pub async fn execute_app(cli: &Cli) -> Result<()> {
     let esptool_path = idf_path.join("components/esptool_py/esptool/esptool.py");
 
     let baud_str = cli.baud.unwrap_or(460800).to_string();
-    let app_bin_path = build_dir.join("app.bin");
     let mut flash_args = vec![
         esptool_path.to_str().unwrap(),
         "--chip",
@@ -78,13 +105,37 @@ pub async fn execute_app(cli: &Cli) -> Result<()> {
         flash_args.extend_from_slice(&["--port", port]);
     }
 
+    flash_args.extend_from_slice(&["write_flash"]);
+
+    // Add force flag if specified
+    if force {
+        flash_args.push("--force");
+    }
+
+    // Add trace flag if specified
+    if trace {
+        flash_args.push("--trace");
+    }
+
+    // Add extra arguments if specified
+    if let Some(extra) = extra_args {
+        for arg in extra.split_whitespace() {
+            flash_args.push(arg);
+        }
+    }
+
     flash_args.extend_from_slice(&[
-        "write_flash",
         "0x10000", // Default app offset
         app_bin_path.to_str().unwrap(),
     ]);
 
-    utils::run_command(&python, &flash_args, Some(&project_dir), cli.verbose).await?;
+    utils::run_command(
+        &python,
+        &flash_args,
+        Some(&project_dir),
+        cli.verbose || trace,
+    )
+    .await?;
 
     println!("App flash completed successfully!");
     Ok(())
