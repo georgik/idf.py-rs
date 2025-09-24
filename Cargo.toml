@@ -1,0 +1,32 @@
+[package]
+name = "idf-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["ESP-IDF Rust Community"]
+description = "A fast Rust implementation of ESP-IDF's idf.py build tool"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/georgik/idf-rs"
+homepage = "https://github.com/georgik/idf-rs"
+readme = "README.md"
+keywords = ["esp32", "esp-idf", "embedded", "build-tool", "iot"]
+categories = ["command-line-utilities", "development-tools::build-utils", "embedded"]
+exclude = [
+    "test-project/*",
+    ".git/*",
+    "target/*",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[[bin]]
+name = "idf-rs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.48", features = ["derive"] }
+env_logger = "0.11.8"
+serde = { version = "1.0.226", features = ["derive"] }
+serde_json = "1.0.145"
+tokio = { version = "1.47.1", features = ["full"] }
