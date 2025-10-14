@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
 
@@ -9,8 +10,8 @@ use std::path::PathBuf;
 #[command(about = "ESP-IDF CLI build management tool (Rust implementation)")]
 struct Cli {
     /// Show IDF version and exit
-    #[arg(long)]
-    version: bool,
+    #[arg(long = "idf-version")]
+    idf_version: bool,
 
     /// Print list of supported targets and exit
     #[arg(long, alias = "list-targets")]
@@ -97,7 +98,6 @@ enum Commands {
         args: Vec<String>,
     },
     /// Flash the app only
-    #[command(alias = "app-flash")]
     AppFlash {
         /// Extra arguments to pass to esptool
         #[arg(long = "extra-args")]
@@ -158,6 +158,31 @@ mod build_systems;
 mod commands;
 mod config;
 mod utils;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct EimIdfConfig {
+    #[serde(rename = "gitPath")]
+    git_path: String,
+    #[serde(rename = "idfInstalled")]
+    idf_installed: Vec<EimIdfInstallation>,
+    #[serde(rename = "idfSelectedId")]
+    idf_selected_id: String,
+    #[serde(rename = "eimPath")]
+    eim_path: String,
+    version: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct EimIdfInstallation {
+    #[serde(rename = "activationScript")]
+    activation_script: String,
+    id: String,
+    #[serde(rename = "idfToolsPath")]
+    idf_tools_path: String,
+    name: String,
+    path: String,
+    python: String,
+}
 
 #[derive(Debug, Clone)]
 struct ParsedCommand {
@@ -251,7 +276,7 @@ fn parse_multiple_commands(args: &[String]) -> Result<MultipleCommands> {
     if commands.len() > 1 || (commands.len() == 1 && found_multiple_commands) {
         // Parse global arguments - create a minimal CLI with defaults
         let cli = Cli {
-            version: false,
+            idf_version: false,
             list_targets: false,
             project_dir: None,
             build_dir: None,
@@ -366,12 +391,167 @@ async fn execute_single_command(cli: &Cli, cmd: &ParsedCommand) -> Result<()> {
     }
 }
 
-/// Install idf-rs as idf.py replacement by creating a symlink
+/// Install idf-rs as idf.py replacement
 async fn execute_install_alias(force: bool) -> Result<()> {
+    println!("Installing idf-rs as idf.py replacement...");
+
+    #[cfg(windows)]
+    {
+        execute_install_alias_windows(force).await
+    }
+
+    #[cfg(not(windows))]
+    {
+        execute_install_alias_unix(force).await
+    }
+}
+
+/// Windows-specific install-alias implementation using EIM
+#[cfg(windows)]
+async fn execute_install_alias_windows(force: bool) -> Result<()> {
+    use std::path::Path;
+
+    // Read EIM configuration
+    let eim_config_path = Path::new("C:\\Espressif\\tools\\eim_idf.json");
+    if !eim_config_path.exists() {
+        return Err(anyhow::anyhow!(
+            "EIM configuration not found at {}. Please ensure ESP-IDF is installed via EIM (Espressif Installation Manager).",
+            eim_config_path.display()
+        ));
+    }
+
+    let config_content = std::fs::read_to_string(eim_config_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read EIM configuration: {}", e))?;
+
+    let config: EimIdfConfig = serde_json::from_str(&config_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse EIM configuration: {}", e))?;
+
+    // Find the current ESP-IDF installation's tools path
+    let current_installation = config
+        .idf_installed
+        .iter()
+        .find(|install| install.id == config.idf_selected_id)
+        .ok_or_else(|| anyhow::anyhow!("Current ESP-IDF installation not found in EIM config"))?;
+
+    println!(
+        "Found ESP-IDF installation: {} at {}",
+        current_installation.name, current_installation.path
+    );
+    println!("Tools path: {}", current_installation.idf_tools_path);
+
+    // The idf-exe directory structure
+    let idf_exe_dir = Path::new(&current_installation.idf_tools_path).join("idf-exe");
+    if !idf_exe_dir.exists() {
+        return Err(anyhow::anyhow!(
+            "idf-exe directory not found at {}. This might not be a complete EIM installation.",
+            idf_exe_dir.display()
+        ));
+    }
+
+    // Find the idf.py.exe version directory (should be something like "1.0.3")
+    let version_dirs: Vec<_> = std::fs::read_dir(&idf_exe_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to read idf-exe directory: {}", e))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if version_dirs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No version directories found in {}",
+            idf_exe_dir.display()
+        ));
+    }
+
+    // Use the first (and typically only) version directory
+    let version_dir = &version_dirs[0];
+    let original_idf_exe = version_dir.join("idf.py.exe");
+
+    if !original_idf_exe.exists() {
+        return Err(anyhow::anyhow!(
+            "idf.py.exe not found at {}",
+            original_idf_exe.display()
+        ));
+    }
+
+    println!(
+        "Found original idf.py.exe at: {}",
+        original_idf_exe.display()
+    );
+
+    // Create backup
+    let backup_path = version_dir.join("idf.py.exe.backup");
+    if backup_path.exists() {
+        if !force {
+            return Err(anyhow::anyhow!(
+                "Backup already exists at {}. Use --force to overwrite.",
+                backup_path.display()
+            ));
+        } else {
+            println!("Removing existing backup: {}", backup_path.display());
+            std::fs::remove_file(&backup_path)
+                .map_err(|e| anyhow::anyhow!("Failed to remove existing backup: {}", e))?;
+        }
+    }
+
+    // Check if we're already installed
+    if original_idf_exe.metadata().map(|m| m.len()).unwrap_or(0)
+        == std::env::current_exe().unwrap().metadata().unwrap().len()
+    {
+        println!("idf-rs appears to already be installed as idf.py.exe");
+        return Ok(());
+    }
+
+    // Create backup of original
+    println!(
+        "Creating backup: {} -> {}",
+        original_idf_exe.display(),
+        backup_path.display()
+    );
+    std::fs::copy(&original_idf_exe, &backup_path)
+        .map_err(|e| anyhow::anyhow!("Failed to create backup: {}", e))?;
+
+    // Get current executable path
+    let current_exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("Failed to get current executable path: {}", e))?;
+
+    // Replace the original idf.py.exe with our binary
+    println!(
+        "Replacing idf.py.exe: {} -> {}",
+        current_exe.display(),
+        original_idf_exe.display()
+    );
+    std::fs::copy(&current_exe, &original_idf_exe).map_err(|e| {
+        // Try to restore backup if copy fails
+        let _ = std::fs::copy(&backup_path, &original_idf_exe);
+        let _ = std::fs::remove_file(&backup_path);
+        anyhow::anyhow!("Failed to replace idf.py.exe: {}", e)
+    })?;
+
+    println!("✅ Successfully installed idf-rs as idf.py replacement!");
+    println!(
+        "   Original idf.py.exe backed up to: {}",
+        backup_path.display()
+    );
+    println!("   idf.py.exe now points to idf-rs");
+    println!("");
+    println!("You can now use 'idf.py' commands and they will use the fast Rust implementation.");
+    println!("To restore the original, run: idf-rs uninstall-alias");
+
+    Ok(())
+}
+
+/// Unix-specific install-alias implementation using symlinks
+#[cfg(not(windows))]
+async fn execute_install_alias_unix(force: bool) -> Result<()> {
     use std::path::Path;
     use std::process::Command;
-
-    println!("Installing idf-rs as idf.py replacement...");
 
     // Find the current idf.py location
     let idf_py_output = Command::new("which")
@@ -459,23 +639,11 @@ async fn execute_install_alias(force: bool) -> Result<()> {
         idf_rs_path
     );
 
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&idf_rs_path, &idf_py_path).map_err(|e| {
-            // Try to restore backup if symlink creation fails
-            let _ = std::fs::rename(&backup_path, &idf_py_path);
-            anyhow::anyhow!("Failed to create symlink: {}", e)
-        })?
-    }
-
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_file(&idf_rs_path, &idf_py_path).map_err(|e| {
-            // Try to restore backup if symlink creation fails
-            let _ = std::fs::rename(&backup_path, &idf_py_path);
-            anyhow::anyhow!("Failed to create symlink: {}", e)
-        })?
-    }
+    std::os::unix::fs::symlink(&idf_rs_path, &idf_py_path).map_err(|e| {
+        // Try to restore backup if symlink creation fails
+        let _ = std::fs::rename(&backup_path, &idf_py_path);
+        anyhow::anyhow!("Failed to create symlink: {}", e)
+    })?;
 
     println!("✅ Successfully installed idf-rs as idf.py replacement!");
     println!("   Original idf.py backed up to: {}", backup_path.display());
@@ -489,10 +657,127 @@ async fn execute_install_alias(force: bool) -> Result<()> {
 
 /// Uninstall idf-rs alias and restore original idf.py
 async fn execute_uninstall_alias() -> Result<()> {
+    println!("Uninstalling idf-rs alias and restoring original idf.py...");
+
+    #[cfg(windows)]
+    {
+        execute_uninstall_alias_windows().await
+    }
+
+    #[cfg(not(windows))]
+    {
+        execute_uninstall_alias_unix().await
+    }
+}
+
+/// Windows-specific uninstall-alias implementation
+#[cfg(windows)]
+async fn execute_uninstall_alias_windows() -> Result<()> {
+    use std::path::Path;
+
+    // Read EIM configuration
+    let eim_config_path = Path::new("C:\\Espressif\\tools\\eim_idf.json");
+    if !eim_config_path.exists() {
+        return Err(anyhow::anyhow!(
+            "EIM configuration not found at {}. Please ensure ESP-IDF is installed via EIM.",
+            eim_config_path.display()
+        ));
+    }
+
+    let config_content = std::fs::read_to_string(eim_config_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read EIM configuration: {}", e))?;
+
+    let config: EimIdfConfig = serde_json::from_str(&config_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse EIM configuration: {}", e))?;
+
+    // Find the current ESP-IDF installation's tools path
+    let current_installation = config
+        .idf_installed
+        .iter()
+        .find(|install| install.id == config.idf_selected_id)
+        .ok_or_else(|| anyhow::anyhow!("Current ESP-IDF installation not found in EIM config"))?;
+
+    // The idf-exe directory structure
+    let idf_exe_dir = Path::new(&current_installation.idf_tools_path).join("idf-exe");
+    if !idf_exe_dir.exists() {
+        return Err(anyhow::anyhow!(
+            "idf-exe directory not found at {}.",
+            idf_exe_dir.display()
+        ));
+    }
+
+    // Find the version directory
+    let version_dirs: Vec<_> = std::fs::read_dir(&idf_exe_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to read idf-exe directory: {}", e))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if version_dirs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No version directories found in {}",
+            idf_exe_dir.display()
+        ));
+    }
+
+    let version_dir = &version_dirs[0];
+    let current_idf_exe = version_dir.join("idf.py.exe");
+    let backup_path = version_dir.join("idf.py.exe.backup");
+
+    // Check if backup exists
+    if !backup_path.exists() {
+        return Err(anyhow::anyhow!(
+            "No backup found at {}. Cannot restore original idf.py.exe.",
+            backup_path.display()
+        ));
+    }
+
+    // Check if current idf.py.exe exists
+    if !current_idf_exe.exists() {
+        return Err(anyhow::anyhow!(
+            "Current idf.py.exe not found at {}.",
+            current_idf_exe.display()
+        ));
+    }
+
+    println!("Found backup at: {}", backup_path.display());
+    println!("Restoring to: {}", current_idf_exe.display());
+
+    // Remove current idf.py.exe
+    std::fs::remove_file(&current_idf_exe)
+        .map_err(|e| anyhow::anyhow!("Failed to remove current idf.py.exe: {}", e))?;
+
+    // Restore from backup
+    println!(
+        "Restoring backup: {} -> {}",
+        backup_path.display(),
+        current_idf_exe.display()
+    );
+    std::fs::copy(&backup_path, &current_idf_exe)
+        .map_err(|e| anyhow::anyhow!("Failed to restore backup: {}", e))?;
+
+    // Remove backup file
+    std::fs::remove_file(&backup_path)
+        .map_err(|e| anyhow::anyhow!("Failed to remove backup file: {}", e))?;
+
+    println!("✅ Successfully restored original idf.py.exe!");
+    println!("   idf.py.exe now points to the original ESP-IDF Python implementation.");
+
+    Ok(())
+}
+
+/// Unix-specific uninstall-alias implementation
+#[cfg(not(windows))]
+async fn execute_uninstall_alias_unix() -> Result<()> {
     use std::path::Path;
     use std::process::Command;
-
-    println!("Uninstalling idf-rs alias and restoring original idf.py...");
 
     // Find the current idf.py location
     let idf_py_output = Command::new("which")
@@ -573,7 +858,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Handle global flags first
-    if cli.version {
+    if cli.idf_version {
         println!("ESP-IDF Rust CLI v{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
